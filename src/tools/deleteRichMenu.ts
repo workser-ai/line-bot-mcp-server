@@ -1,43 +1,48 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { messagingApi } from "@line/bot-sdk";
+/**
+ * Copyright 2025 LY Corporation
+ *
+ * LINE Corporation licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { FastMCP } from "fastmcp";
+import { z } from "zod";
+import { LineSessionData } from "../types/session.js";
+import { getMessagingApiClient } from "../clients/lineClientFactory.js";
+import { getSessionOrDefault } from "../utils/getSessionOrDefault.js";
 import {
   createErrorResponse,
   createSuccessResponse,
 } from "../common/response.js";
-import { AbstractTool } from "./AbstractTool.js";
-import { z } from "zod";
 
-export default class DeleteRichMenu extends AbstractTool {
-  private client: messagingApi.MessagingApiClient;
+export function registerDeleteRichMenu(server: FastMCP<LineSessionData>) {
+  server.addTool({
+    name: "delete_rich_menu",
+    description: "Delete a rich menu from your LINE Official Account.",
+    parameters: z.object({
+      richMenuId: z.string().describe("The ID of the rich menu to delete."),
+    }),
+    execute: async (args, context) => {
+      try {
+        const session = getSessionOrDefault(context.session);
+        const client = getMessagingApiClient(session);
 
-  constructor(client: messagingApi.MessagingApiClient) {
-    super();
-    this.client = client;
-  }
-
-  register(server: McpServer) {
-    const richMenuIdSchema = z
-      .string()
-      .describe("The ID of the rich menu to delete.");
-
-    server.tool(
-      "delete_rich_menu",
-      "Delete a rich menu from your LINE Official Account.",
-      {
-        richMenuId: richMenuIdSchema.describe(
-          "The ID of the rich menu to delete.",
-        ),
-      },
-      async ({ richMenuId }) => {
-        try {
-          const response = await this.client.deleteRichMenu(richMenuId);
-          return createSuccessResponse(response);
-        } catch (error) {
-          return createErrorResponse(
-            `Failed to delete rich menu: ${error.message}`,
-          );
-        }
-      },
-    );
-  }
+        const response = await client.deleteRichMenu(args.richMenuId);
+        return createSuccessResponse(response);
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        return createErrorResponse(`Failed to delete rich menu: ${message}`);
+      }
+    },
+  });
 }

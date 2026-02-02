@@ -38,7 +38,7 @@
     "@line/bot-sdk": "^10.0.0",
     "@marp-team/marp-cli": "^4.2.3",
     "@marp-team/marp-core": "^4.1.0",
-    "@modelcontextprotocol/sdk": "^1.8.0",
+    "fastmcp": "^3.31.0",
     "puppeteer": "^24.27.0",
     "zod": "^3.25.76"
   },
