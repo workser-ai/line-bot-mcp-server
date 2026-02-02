@@ -1,57 +1,68 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+/**
+ * Copyright 2025 LY Corporation
+ *
+ * LINE Corporation licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { FastMCP } from "fastmcp";
 import { messagingApi } from "@line/bot-sdk";
 import { z } from "zod";
+import { LineSessionData } from "../types/session.js";
+import { getMessagingApiClient } from "../clients/lineClientFactory.js";
+import { getSessionOrDefault } from "../utils/getSessionOrDefault.js";
 import {
   createErrorResponse,
   createSuccessResponse,
 } from "../common/response.js";
-import { AbstractTool } from "./AbstractTool.js";
 import { NO_USER_ID_ERROR } from "../common/schema/constants.js";
 import { flexMessageSchema } from "../common/schema/flexMessage.js";
 
-export default class PushFlexMessage extends AbstractTool {
-  private client: messagingApi.MessagingApiClient;
-  private destinationId: string;
-
-  constructor(client: messagingApi.MessagingApiClient, destinationId: string) {
-    super();
-    this.client = client;
-    this.destinationId = destinationId;
-  }
-
-  register(server: McpServer) {
-    const userIdSchema = z
-      .string()
-      .default(this.destinationId)
-      .describe(
-        "The user ID to receive a message. Defaults to DESTINATION_USER_ID.",
-      );
-
-    server.tool(
-      "push_flex_message",
+export function registerPushFlexMessage(server: FastMCP<LineSessionData>) {
+  server.addTool({
+    name: "push_flex_message",
+    description:
       "Push a highly customizable flex message to a user via LINE. Supports both bubble (single container) and carousel " +
-        "(multiple swipeable bubbles) layouts.",
-      {
-        userId: userIdSchema,
-        message: flexMessageSchema,
-      },
-      async ({ userId, message }) => {
-        if (!userId) {
-          return createErrorResponse(NO_USER_ID_ERROR);
-        }
+      "(multiple swipeable bubbles) layouts.",
+    parameters: z.object({
+      userId: z
+        .string()
+        .optional()
+        .describe(
+          "The user ID to receive a message. Defaults to the configured destination user ID.",
+        ),
+      message: flexMessageSchema,
+    }),
+    execute: async (args, context) => {
+      const session = getSessionOrDefault(context.session);
+      const client = getMessagingApiClient(session);
 
-        try {
-          const response = await this.client.pushMessage({
-            to: userId,
-            messages: [message as unknown as messagingApi.Message],
-          });
-          return createSuccessResponse(response);
-        } catch (error) {
-          return createErrorResponse(
-            `Failed to push flex message: ${error.message}`,
-          );
-        }
-      },
-    );
-  }
+      const targetUserId = args.userId || session.destinationUserId;
+
+      if (!targetUserId) {
+        return createErrorResponse(NO_USER_ID_ERROR);
+      }
+
+      try {
+        const response = await client.pushMessage({
+          to: targetUserId,
+          messages: [args.message as unknown as messagingApi.Message],
+        });
+        return createSuccessResponse(response);
+      } catch (error: unknown) {
+        const message =
+          error instanceof Error ? error.message : "Unknown error";
+        return createErrorResponse(`Failed to push flex message: ${message}`);
+      }
+    },
+  });
 }

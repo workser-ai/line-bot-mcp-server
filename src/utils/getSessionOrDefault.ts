@@ -14,5 +14,23 @@
  * under the License.
  */
 
-export const NO_USER_ID_ERROR =
-  "Error: Specify the userId parameter, provide X-Line-Destination-User-Id header (HTTP), or set DESTINATION_USER_ID environment variable (stdio).";
+import { LineSessionData } from "../types/session.js";
+
+/**
+ * Gets session from context, or creates a default session from env vars for stdio transport.
+ * FastMCP does not call authenticate for stdio, so session may be undefined.
+ */
+export function getSessionOrDefault(
+  session: LineSessionData | undefined,
+): LineSessionData {
+  if (session) {
+    return session;
+  }
+
+  // Fallback for stdio transport - use env vars
+  return {
+    channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN || "",
+    destinationUserId: process.env.DESTINATION_USER_ID || null,
+    headers: {},
+  };
+}

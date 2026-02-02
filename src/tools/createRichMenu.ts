@@ -1,10 +1,21 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+/**
+ * Copyright 2025 LY Corporation
+ *
+ * LINE Corporation licenses this file to you under the Apache License,
+ * version 2.0 (the "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at:
+ *
+ *   https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+ * WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+ * License for the specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { FastMCP } from "fastmcp";
 import { messagingApi } from "@line/bot-sdk";
-import {
-  createErrorResponse,
-  createSuccessResponse,
-} from "../common/response.js";
-import { AbstractTool } from "./AbstractTool.js";
 import { z } from "zod";
 import { Marp } from "@marp-team/marp-core";
 import puppeteer from "puppeteer";
@@ -12,114 +23,115 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { fileURLToPath } from "url";
-import { actionSchema } from "../common/schema/actionSchema.js";
 import { promises as fsp } from "fs";
+import { LineSessionData } from "../types/session.js";
+import {
+  getMessagingApiClient,
+  getMessagingApiBlobClient,
+} from "../clients/lineClientFactory.js";
+import { getSessionOrDefault } from "../utils/getSessionOrDefault.js";
+import {
+  createErrorResponse,
+  createSuccessResponse,
+} from "../common/response.js";
+import { actionSchema } from "../common/schema/actionSchema.js";
 
 const RICHMENU_HEIGHT = 910;
 const RICHMENU_WIDTH = 1600;
 
-export default class CreateRichMenu extends AbstractTool {
-  private client: messagingApi.MessagingApiClient;
-  private lineBlobClient: messagingApi.MessagingApiBlobClient;
-
-  constructor(
-    client: messagingApi.MessagingApiClient,
-    lineBlobClient: messagingApi.MessagingApiBlobClient,
-  ) {
-    super();
-    this.client = client;
-    this.lineBlobClient = lineBlobClient;
-  }
-
-  register(server: McpServer) {
-    server.tool(
-      "create_rich_menu",
+export function registerCreateRichMenu(server: FastMCP<LineSessionData>) {
+  server.addTool({
+    name: "create_rich_menu",
+    description:
       "Create a rich menu based on the given actions. Generate and upload a rich menu image based on the given action. This rich menu will be registered as the default.",
-      {
-        chatBarText: z
-          .string()
-          .describe(
-            "Text displayed in the chat bar and this is also used as name of the rich menu to create",
-          ),
-        actions: z
-          .array(actionSchema)
-          .min(1)
-          .max(6)
-          .describe("The actions of the rich menu."),
-      },
-      async ({ chatBarText, actions }) => {
-        // Flow:
+    parameters: z.object({
+      chatBarText: z
+        .string()
+        .describe(
+          "Text displayed in the chat bar and this is also used as name of the rich menu to create",
+        ),
+      actions: z
+        .array(actionSchema)
+        .min(1)
+        .max(6)
+        .describe("The actions of the rich menu."),
+    }),
+    execute: async (args, context) => {
+      const session = getSessionOrDefault(context.session);
+      const client = getMessagingApiClient(session);
+      const blobClient = getMessagingApiBlobClient(session);
+
+      // Flow:
+      // 1. Validate the rich menu image
+      // 2. Create a rich menu
+      // 3. Generate a rich menu image
+      // 4. Upload the rich menu image
+      // 5. Set the rich menu as the default rich menu
+      let createRichMenuResponse: messagingApi.RichMenuIdResponse | null = null;
+      let setImageResponse: unknown = null;
+      let setDefaultResponse: unknown = null;
+      const lineActions = args.actions as messagingApi.Action[];
+      try {
         // 1. Validate the rich menu image
+        if (lineActions.length < 1 || lineActions.length > 6) {
+          return createErrorResponse("Invalid actions length");
+        }
+
         // 2. Create a rich menu
+        const areas: Array<messagingApi.RichMenuArea> =
+          richmenuAreas(lineActions);
+        const createRichMenuParams = {
+          name: args.chatBarText,
+          chatBarText: args.chatBarText,
+          selected: true,
+          size: {
+            width: RICHMENU_WIDTH,
+            height: RICHMENU_HEIGHT,
+          },
+          areas,
+        };
+        createRichMenuResponse =
+          await client.createRichMenu(createRichMenuParams);
+        const richMenuId = createRichMenuResponse.richMenuId;
+
         // 3. Generate a rich menu image
+        const richMenuImagePath = await generateRichMenuImage(lineActions);
+
         // 4. Upload the rich menu image
+        const imageBuffer = fs.readFileSync(richMenuImagePath);
+        const imageType = "image/png";
+        const imageBlob = new Blob([imageBuffer], { type: imageType });
+        setImageResponse = await blobClient.setRichMenuImage(
+          richMenuId,
+          imageBlob,
+        );
+
         // 5. Set the rich menu as the default rich menu
-        let createRichMenuResponse: any = null;
-        let setImageResponse: any = null;
-        let setDefaultResponse: any = null;
-        const lineActions = actions as messagingApi.Action[];
-        try {
-          // 1. Validate the rich menu image
-          if (lineActions.length < 1 || lineActions.length > 6) {
-            return createErrorResponse("Invalid actions length");
-          }
+        setDefaultResponse = await client.setDefaultRichMenu(richMenuId);
 
-          // 2. Create a rich menu
-          const areas: Array<messagingApi.RichMenuArea> =
-            richmenuAreas(lineActions);
-          const createRichMenuParams = {
-            name: chatBarText,
-            chatBarText,
-            selected: true,
-            size: {
-              width: RICHMENU_WIDTH,
-              height: RICHMENU_HEIGHT,
-            },
-            areas,
-          };
-          createRichMenuResponse =
-            await this.client.createRichMenu(createRichMenuParams);
-          const richMenuId = createRichMenuResponse.richMenuId;
-
-          // 3. Generate a rich menu image
-          const richMenuImagePath = await generateRichMenuImage(lineActions);
-
-          // 4. Upload the rich menu image
-          const imageBuffer = fs.readFileSync(richMenuImagePath);
-          const imageType = "image/png";
-          const imageBlob = new Blob([imageBuffer], { type: imageType });
-          setImageResponse = await this.lineBlobClient.setRichMenuImage(
-            richMenuId,
-            imageBlob,
-          );
-
-          // 5. Set the rich menu as the default rich menu
-          setDefaultResponse = await this.client.setDefaultRichMenu(richMenuId);
-
-          return createSuccessResponse({
-            message: "Rich menu created successfully and set as default.",
-            richMenuId,
-            createRichMenuParams,
+        return createSuccessResponse({
+          message: "Rich menu created successfully and set as default.",
+          richMenuId,
+          createRichMenuParams,
+          createRichMenuResponse,
+          setImageResponse,
+          setDefaultResponse,
+          richMenuImagePath,
+        });
+      } catch (error: unknown) {
+        console.error("Rich menu creation error:", error);
+        return createErrorResponse(
+          JSON.stringify({
+            error: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
             createRichMenuResponse,
             setImageResponse,
             setDefaultResponse,
-            richMenuImagePath,
-          });
-        } catch (error) {
-          console.error("Rich menu creation error:", error);
-          return createErrorResponse(
-            JSON.stringify({
-              error: error instanceof Error ? error.message : String(error),
-              stack: error instanceof Error ? error.stack : undefined,
-              createRichMenuResponse,
-              setImageResponse,
-              setDefaultResponse,
-            }),
-          );
-        }
-      },
-    );
-  }
+          }),
+        );
+      }
+    },
+  });
 }
 
 const __filename = fileURLToPath(import.meta.url);

@@ -16,64 +16,106 @@
  * under the License.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import * as line from "@line/bot-sdk";
-import { LINE_BOT_MCP_SERVER_VERSION, USER_AGENT } from "./version.js";
-import CancelRichMenuDefault from "./tools/cancelRichMenuDefault.js";
-import PushTextMessage from "./tools/pushTextMessage.js";
-import PushFlexMessage from "./tools/pushFlexMessage.js";
-import BroadcastTextMessage from "./tools/broadcastTextMessage.js";
-import BroadcastFlexMessage from "./tools/broadcastFlexMessage.js";
-import GetProfile from "./tools/getProfile.js";
-import GetMessageQuota from "./tools/getMessageQuota.js";
-import GetRichMenuList from "./tools/getRichMenuList.js";
-import DeleteRichMenu from "./tools/deleteRichMenu.js";
-import SetRichMenuDefault from "./tools/setRichMenuDefault.js";
-import CreateRichMenu from "./tools/createRichMenu.js";
+import { FastMCP } from "fastmcp";
+import { IncomingHttpHeaders } from "http";
+import { LINE_BOT_MCP_SERVER_VERSION } from "./version.js";
 
-const server = new McpServer({
+// Extract semver compatible version (remove suffix like -local)
+const semverVersion = LINE_BOT_MCP_SERVER_VERSION.split(
+  "-",
+)[0] as `${number}.${number}.${number}`;
+import { LineSessionData } from "./types/session.js";
+
+// Import all tool registration functions
+import { registerPushTextMessage } from "./tools/pushTextMessage.js";
+import { registerPushFlexMessage } from "./tools/pushFlexMessage.js";
+import { registerBroadcastTextMessage } from "./tools/broadcastTextMessage.js";
+import { registerBroadcastFlexMessage } from "./tools/broadcastFlexMessage.js";
+import { registerGetProfile } from "./tools/getProfile.js";
+import { registerGetMessageQuota } from "./tools/getMessageQuota.js";
+import { registerGetRichMenuList } from "./tools/getRichMenuList.js";
+import { registerDeleteRichMenu } from "./tools/deleteRichMenu.js";
+import { registerSetRichMenuDefault } from "./tools/setRichMenuDefault.js";
+import { registerCancelRichMenuDefault } from "./tools/cancelRichMenuDefault.js";
+import { registerCreateRichMenu } from "./tools/createRichMenu.js";
+
+// Header names for dynamic configuration
+const HEADER_CHANNEL_ACCESS_TOKEN = "x-line-channel-access-token";
+const HEADER_DESTINATION_USER_ID = "x-line-destination-user-id";
+
+// Determine transport mode from environment
+const transportType = process.env.MCP_TRANSPORT || "stdio";
+
+/**
+ * Helper to safely get a header value (handles array headers)
+ */
+function getHeader(headers: IncomingHttpHeaders, name: string): string | null {
+  const value = headers[name];
+  if (Array.isArray(value)) return value[0] || null;
+  return value || null;
+}
+
+const server = new FastMCP<LineSessionData>({
   name: "line-bot",
-  version: LINE_BOT_MCP_SERVER_VERSION,
-});
+  version: semverVersion,
+  instructions:
+    "LINE Bot MCP Server for interacting with LINE Official Account. " +
+    "Supports sending messages, managing rich menus, and retrieving user profiles.",
 
-const channelAccessToken = process.env.CHANNEL_ACCESS_TOKEN || "";
-const destinationId = process.env.DESTINATION_USER_ID || "";
+  // Authentication only applies to HTTP transport
+  authenticate: async (request): Promise<LineSessionData> => {
+    const headers = request.headers;
 
-const messagingApiClient = new line.messagingApi.MessagingApiClient({
-  channelAccessToken: channelAccessToken,
-  defaultHeaders: {
-    "User-Agent": USER_AGENT,
+    // Get token from header or fall back to env var
+    const channelAccessToken =
+      getHeader(headers, HEADER_CHANNEL_ACCESS_TOKEN) || "";
+
+    if (!channelAccessToken) {
+      throw new Response(null, {
+        status: 401,
+        statusText:
+          "Missing channel access token. Provide via X-Line-Channel-Access-Token header or CHANNEL_ACCESS_TOKEN env var.",
+      });
+    }
+
+    const destinationUserId = getHeader(headers, HEADER_DESTINATION_USER_ID);
+    null;
+
+    return {
+      channelAccessToken,
+      destinationUserId,
+      headers,
+    };
   },
 });
 
-const lineBlobClient = new line.messagingApi.MessagingApiBlobClient({
-  channelAccessToken: channelAccessToken,
-  defaultHeaders: {
-    "User-Agent": USER_AGENT,
-  },
-});
+// Register all tools
+registerPushTextMessage(server);
+registerPushFlexMessage(server);
+registerBroadcastTextMessage(server);
+registerBroadcastFlexMessage(server);
+registerGetProfile(server);
+registerGetMessageQuota(server);
+registerGetRichMenuList(server);
+registerDeleteRichMenu(server);
+registerSetRichMenuDefault(server);
+registerCancelRichMenuDefault(server);
+registerCreateRichMenu(server);
 
-new PushTextMessage(messagingApiClient, destinationId).register(server);
-new PushFlexMessage(messagingApiClient, destinationId).register(server);
-new BroadcastTextMessage(messagingApiClient).register(server);
-new BroadcastFlexMessage(messagingApiClient).register(server);
-new GetProfile(messagingApiClient, destinationId).register(server);
-new GetMessageQuota(messagingApiClient).register(server);
-new GetRichMenuList(messagingApiClient).register(server);
-new DeleteRichMenu(messagingApiClient).register(server);
-new SetRichMenuDefault(messagingApiClient).register(server);
-new CancelRichMenuDefault(messagingApiClient).register(server);
-new CreateRichMenu(messagingApiClient, lineBlobClient).register(server);
-
+// Start server
 async function main() {
-  if (!process.env.CHANNEL_ACCESS_TOKEN) {
-    console.error("Please set CHANNEL_ACCESS_TOKEN");
-    process.exit(1);
-  }
+  // HTTP streaming transport
+  const port = parseInt(process.env.MCP_PORT || "8080", 10);
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await server.start({
+    transportType: "httpStream",
+    httpStream: {
+      port,
+      endpoint: "/mcp",
+    },
+  });
+
+  console.log(`LINE Bot MCP Server running on http://localhost:${port}/mcp`);
 }
 
 main().catch(error => {
