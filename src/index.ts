@@ -68,9 +68,7 @@ const server = new FastMCP<LineSessionData>({
 
     // Get token from header or fall back to env var
     const channelAccessToken =
-      getHeader(headers, HEADER_CHANNEL_ACCESS_TOKEN) ||
-      process.env.CHANNEL_ACCESS_TOKEN ||
-      "";
+      getHeader(headers, HEADER_CHANNEL_ACCESS_TOKEN) || "";
 
     if (!channelAccessToken) {
       throw new Response(null, {
@@ -80,10 +78,8 @@ const server = new FastMCP<LineSessionData>({
       });
     }
 
-    const destinationUserId =
-      getHeader(headers, HEADER_DESTINATION_USER_ID) ||
-      process.env.DESTINATION_USER_ID ||
-      null;
+    const destinationUserId = getHeader(headers, HEADER_DESTINATION_USER_ID);
+    null;
 
     return {
       channelAccessToken,
@@ -108,32 +104,18 @@ registerCreateRichMenu(server);
 
 // Start server
 async function main() {
-  if (transportType === "stdio") {
-    // For stdio, we need credentials from env vars
-    if (!process.env.CHANNEL_ACCESS_TOKEN) {
-      console.error(
-        "Error: CHANNEL_ACCESS_TOKEN environment variable is required for stdio transport",
-      );
-      process.exit(1);
-    }
+  // HTTP streaming transport
+  const port = parseInt(process.env.MCP_PORT || "8080", 10);
 
-    await server.start({
-      transportType: "stdio",
-    });
-  } else {
-    // HTTP streaming transport
-    const port = parseInt(process.env.MCP_PORT || "8080", 10);
+  await server.start({
+    transportType: "httpStream",
+    httpStream: {
+      port,
+      endpoint: "/mcp",
+    },
+  });
 
-    await server.start({
-      transportType: "httpStream",
-      httpStream: {
-        port,
-        endpoint: "/mcp",
-      },
-    });
-
-    console.log(`LINE Bot MCP Server running on http://localhost:${port}/mcp`);
-  }
+  console.log(`LINE Bot MCP Server running on http://localhost:${port}/mcp`);
 }
 
 main().catch(error => {
